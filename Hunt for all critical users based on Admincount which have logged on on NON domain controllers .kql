@@ -1,0 +1,9 @@
+
+// Hunt for all critical users based on Admincount which have logged on on NON domain controllers
+let Vuln = Nodes
+| where (set_has_element(Categories, "device") and isnotnull(NodeProperties.rawData.highRiskVulnerabilityInsights) and (NodeProperties.rawData.deviceRole != "DomainController")) or  ((set_has_element(Categories, "identity")  and NodeProperties.rawData.adminCount == "1"));
+Edges
+| make-graph SourceNodeId --> TargetNodeId with Vuln on NodeId
+| graph-match (n1)-[e]->(n2)
+where e.EdgeLabel in ("frequently logged in by","can authenticate to") and n1.NodeLabel == "user" and n2.NodeLabel == "microsoft.compute/virtualmachines"
+project n1.NodeName, e.EdgeLabel, n2.NodeName
