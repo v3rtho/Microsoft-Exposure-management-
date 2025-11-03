@@ -1,0 +1,104 @@
+# Microsoft Defender Advanced Hunting API Script
+# Queries ExposureGraphNodes where NodeLabel != "Cve"
+
+# Configuration
+$tenantId = "YOUR_TENANT_ID"
+$appId = "YOUR_APP_ID"
+$appSecret = "YOUR_APP_SECRET"
+
+# API endpoints
+$oAuthUri = "https://login.microsoftonline.com/$tenantId/oauth2/v2.0/token"
+$apiUri = "https://api.securitycenter.microsoft.com/api/advancedqueries/run"
+
+# Query to execute
+$query = @"
+ExposureGraphNodes
+| where NodeLabel != "Cve"
+"@
+
+# Function to get OAuth token
+function Get-AuthToken {
+    param (
+        [string]$TenantId,
+        [string]$AppId,
+        [string]$AppSecret
+    )
+    
+    $body = @{
+        client_id     = $AppId
+        scope         = "https://api.securitycenter.microsoft.com/.default"
+        client_secret = $AppSecret
+        grant_type    = "client_credentials"
+    }
+    
+    try {
+        $response = Invoke-RestMethod -Method Post -Uri $oAuthUri -Body $body -ContentType "application/x-www-form-urlencoded"
+        return $response.access_token
+    }
+    catch {
+        Write-Error "Failed to obtain authentication token: $_"
+        throw
+    }
+}
+
+# Function to run Advanced Hunting query
+function Invoke-AdvancedHuntingQuery {
+    param (
+        [string]$Token,
+        [string]$Query
+    )
+    
+    $headers = @{
+        "Authorization" = "Bearer $Token"
+        "Content-Type"  = "application/json"
+    }
+    
+    $body = @{
+        Query = $Query
+    } | ConvertTo-Json
+    
+    try {
+        $response = Invoke-RestMethod -Method Post -Uri $apiUri -Headers $headers -Body $body
+        return $response
+    }
+    catch {
+        Write-Error "Failed to execute query: $_"
+        throw
+    }
+}
+
+# Main execution
+try {
+    Write-Host "Authenticating to Microsoft Defender..." -ForegroundColor Cyan
+    $token = Get-AuthToken -TenantId $tenantId -AppId $appId -AppSecret $appSecret
+    
+    Write-Host "Executing Advanced Hunting query..." -ForegroundColor Cyan
+    $results = Invoke-AdvancedHuntingQuery -Token $token -Query $query
+    
+    Write-Host "`nQuery executed successfully!" -ForegroundColor Green
+    Write-Host "Results count: $($results.Results.Count)" -ForegroundColor Yellow
+    
+    # Display results
+    if ($results.Results.Count -gt 0) {
+        Write-Host "`nFirst 10 results:" -ForegroundColor Cyan
+        $results.Results | Select-Object -First 10 | Format-Table -AutoSize
+        
+        # Export to CSV
+        $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+        $csvPath = ".\DefenderQueryResults_$timestamp.csv"
+        $results.Results | Export-Csv -Path $csvPath -NoTypeInformation
+        Write-Host "`nResults exported to CSV: $csvPath" -ForegroundColor Green
+        
+        # Export to JSON
+        $jsonPath = ".\DefenderQueryResults_$timestamp.json"
+        $results.Results | ConvertTo-Json -Depth 10 | Out-File -FilePath $jsonPath -Encoding UTF8
+        Write-Host "Results exported to JSON: $jsonPath" -ForegroundColor Green
+    }
+    else {
+        Write-Host "`nNo results found." -ForegroundColor Yellow
+    }
+}
+catch {
+    Write-Error "An error occurred: $_"
+    exit 1
+}
